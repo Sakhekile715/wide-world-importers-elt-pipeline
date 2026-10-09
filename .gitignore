@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Data lake (bronze Parquet) and the SQL Server backup (over GitHub's 100 MB limit)
+lake/
+*.bak
+*.parquet
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# dbt
+target/
+dbt_packages/
+logs/
+.user.yml
+
+# Airflow
+airflow/logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
