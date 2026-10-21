@@ -24,3 +24,6 @@ airflow/logs/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Claude Code local settings
+.claude/
