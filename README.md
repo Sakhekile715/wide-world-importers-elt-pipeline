@@ -72,6 +72,10 @@ psql -U postgres -h localhost -v user=Pipeline_User -v password='...' \
      -v db=world_wide_importers_dw -f sql/postgres/setup_database.sql
 ```
 
+- **Windows:** the Postgres installer doesn't put `psql` on `PATH`. Call it by its full path from PowerShell, for example `& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -U postgres ...`, keeping the rest of the command the same.
+- **The password prompt shows nothing as you type.** That's normal: type the `postgres` password and press Enter. If the prompt won't take input, set it for the current PowerShell session first with `$env:PGPASSWORD = Read-Host 'postgres password' -MaskInput` (PowerShell 7), and run `Remove-Item Env:PGPASSWORD` afterwards.
+- On success psql prints only `CREATE ROLE` (on a first run), `CREATE DATABASE` and `GRANT`.
+
 The scripts create the `bronze`, `bronze_staging` and `control` schemas and their tables themselves.
 
 ### 6. Python environment and Spark jars
@@ -109,6 +113,8 @@ Check the result in Postgres:
 SELECT table_name, last_batch_id, status FROM control.watermark ORDER BY 1;   -- 27 rows, all success
 SELECT count(*) FROM bronze.sales_orders;                                      -- 73595
 ```
+
+`73595` is the count straight after the step 3 restore. If the source has been advanced with `sql/simulate_one_day.sql`, compare against `SELECT COUNT(*) FROM Sales.Orders` in SQL Server instead.
 
 ## Layout
 
