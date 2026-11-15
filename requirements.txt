@@ -1,0 +1,4 @@
+# Python 3.11. JVM jars are pinned separately in jars/jars.lock
+# (python scripts/fetch_jars.py). Java 17 must be on PATH for PySpark.
+pyspark==4.3.0
+psycopg[binary]==3.3.9

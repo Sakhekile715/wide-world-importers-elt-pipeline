@@ -1,0 +1,16 @@
+# JVM dependencies for Spark, pinned with Maven Central SHA-1s.
+# Download with:  python scripts/fetch_jars.py   (jars land in this folder, git-ignored)
+# build_spark() puts exactly these jars on the classpath; it never resolves
+# packages at runtime (spark.jars.packages needs winutils.exe on Windows).
+#
+# Spark 4.3.0 (pyspark) bundles hadoop-client 3.5.0, so hadoop-aws must be 3.5.0.
+# The next three lines are hadoop-aws 3.5.0's runtime dependencies.
+#
+# group:artifact:version                                              sha1
+org.apache.hadoop:hadoop-aws:3.5.0                                    9e594525d264c0db653c7f68da98b245f7d61ea5
+software.amazon.awssdk:bundle:2.35.4                                  7252265e3970b214708e68a8b74a8fa8c875af1e
+software.amazon.s3.analyticsaccelerator:analyticsaccelerator-s3:1.3.1 6c9bd0f6c440c9a78e82d272f5f0252d942419f6
+org.wildfly.openssl:wildfly-openssl:2.2.5.Final                       78a86a04b5ddbfb75d6f3a2812cc724cde4a26f1
+# SQL Server source (landing) and Postgres warehouse (bronze)
+com.microsoft.sqlserver:mssql-jdbc:12.10.0.jre11                      5f1b09d67cd03170d87d5e288638c851632488e1
+org.postgresql:postgresql:42.7.7                                      67f8093e8d8104c74bbf588392ac3229803f5d17
