@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS control.watermark (
     error            text,                              -- last error when status = failed
     updated_at       timestamptz NOT NULL DEFAULT now()
 );
+-- Batch whose failure set status = failed. Only a successful load of THAT
+-- batch clears it, so reloading an older batch can't hide a pending failure.
+ALTER TABLE control.watermark ADD COLUMN IF NOT EXISTS failed_batch_id text;
 
 -- One row per table per batch attempt, with the row counts at each stage.
 CREATE TABLE IF NOT EXISTS control.run_log (

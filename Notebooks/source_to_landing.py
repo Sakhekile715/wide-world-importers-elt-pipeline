@@ -31,6 +31,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,6 +90,10 @@ EXTRA_REQUIRED_COLUMNS: dict[str, list[str]] = {}
 
 # Lowest datetime2 value. Used as the low watermark on the first (full) load.
 INITIAL_WATERMARK = "0001-01-01 00:00:00.0000000"
+# Watermarks are datetime2(7) text (CONVERT style 121); nothing else is allowed.
+WATERMARK_FORMAT = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{7}")
+# Batch ids sort chronologically as text; bronze relies on that.
+BATCH_ID_FORMAT = re.compile(r"\d{8}T\d{6}Z")
 
 # SQL types Spark JDBC cannot read. They're converted to text in the query.
 SPATIAL_TYPES = {"geography", "geometry"}
@@ -322,13 +327,24 @@ class Lake:
         return self._Path(uri).getFileSystem(self._conf)
 
     def check_bucket(self) -> None:
+        hint = (f"Does the bucket exist in MinIO "
+                f"(create it in the console at http://localhost:9001)?")
+        # exists() is no use here: S3A reports a bucket's root as present even
+        # when the bucket isn't. Listing it raises UnknownStoreException instead.
         try:
-            self._fs(self.root + "/").exists(self._Path(self.root + "/"))
+            self._fs(self.root + "/").listStatus(self._Path(self.root + "/"))
         except Exception as exc:  # noqa: BLE001 - surface a clear message
-            raise SystemExit(
-                f"Cannot reach {self.root}. Does the bucket exist in MinIO "
-                f"(create it in the console at http://localhost:9001)? {exc}"
-            ) from exc
+            first_line = str(exc).strip().splitlines()[0][:200]
+            raise SystemExit(f"Bucket {self.root} not reachable. {hint} ({first_line})") from None
+
+    def passed_manifests(self, table: str) -> list[dict]:
+        """Manifests of every passed batch of this table, oldest batch first."""
+        folder = table.replace(".", "_").lower()
+        pattern = f"{self.root}/{folder}/ingest_date=*/batch_id=*/_manifest.json"
+        statuses = self._fs(pattern).globStatus(self._Path(pattern)) or []
+        manifests = [json.loads(self.read_text(s.getPath().toString())) for s in statuses]
+        return sorted((m for m in manifests if m.get("status") == "passed"),
+                      key=lambda m: m["batch_id"])
 
     def exists(self, uri: str) -> bool:
         return self._fs(uri).exists(self._Path(uri))
@@ -469,7 +485,30 @@ def land_table(
     batch_id: str,
 ) -> dict:
     low = watermarks.get(table, {}).get("watermark", INITIAL_WATERMARK)
+
+    # The manifest is the commit point. If a run died after writing a passed
+    # manifest but before saving the watermark, resume from the manifest's
+    # high watermark instead of re-extracting (and duplicating) that window.
+    manifests = lake.passed_manifests(table)
+    if manifests:
+        latest = manifests[-1]
+        if latest["window"]["high_inclusive"] > low:
+            log.warning("%s: watermark %s is behind passed batch %s; resuming from %s",
+                        table, low, latest["batch_id"], latest["window"]["high_inclusive"])
+            low = latest["window"]["high_inclusive"]
+            lake.save_watermark(table, low, latest["batch_id"])  # repair the control file
+        if batch_id <= latest["batch_id"]:
+            raise ValidationError(
+                f"{table}: batch id {batch_id} is not newer than existing batch "
+                f"{latest['batch_id']}; batch ids must increase (bronze orders by them)"
+            )
+
     high = source.max_watermark(table, wm_col)
+    # Both values are pasted into the SQL Server query: accept only the exact
+    # datetime2(7) text format, never arbitrary text from the control file.
+    for name, value in (("low", low), ("high", high)):
+        if value is not None and not WATERMARK_FORMAT.fullmatch(value):
+            raise ValidationError(f"{table}: {name} watermark {value!r} is not datetime2(7) text")
 
     if high is None or high <= low:  # same fixed-width format -> string compare is safe
         log.info("%-34s no new rows (watermark %s)", table, low)
@@ -530,7 +569,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--tables", nargs="+", choices=sorted(TABLES),
                         help="Subset of tables (default: all)")
-    parser.add_argument("--batch-id", help="Override batch id (default: UTC timestamp)")
+    parser.add_argument("--batch-id",
+                        help="Override batch id (default: UTC timestamp, YYYYMMDDTHHMMSSZ). "
+                             "Must be newer than every existing batch of each table.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Log extraction queries")
     args = parser.parse_args(argv)
 
@@ -544,6 +585,8 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.now(timezone.utc)
     ingest_date = now.strftime("%Y-%m-%d")
     batch_id = args.batch_id or now.strftime("%Y%m%dT%H%M%SZ")
+    if not BATCH_ID_FORMAT.fullmatch(batch_id):
+        parser.error(f"--batch-id must look like 20261115T172904Z, got {batch_id!r}")
 
     spark = build_spark()
     spark.sparkContext.setLogLevel("WARN")

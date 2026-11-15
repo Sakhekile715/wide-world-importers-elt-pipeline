@@ -76,12 +76,17 @@ The scripts create the `bronze`, `bronze_staging` and `control` schemas and thei
 
 ### 6. Python environment and Spark jars
 
+Create and activate a virtual environment. Every later command assumes it is active.
+
 ```sh
 python -m venv .venv
-.venv/Scripts/python -m pip install -r requirements.txt   # Windows
-# .venv/bin/python -m pip install -r requirements.txt     # macOS / Linux
 
-.venv/Scripts/python scripts/fetch_jars.py
+source .venv/bin/activate        # macOS / Linux
+source .venv/Scripts/activate    # Windows, Git Bash
+.venv\Scripts\Activate.ps1       # Windows, PowerShell
+
+python -m pip install -r requirements.txt
+python scripts/fetch_jars.py
 ```
 
 `fetch_jars.py` downloads the JDBC drivers and the S3A connector pinned in [jars/jars.lock](jars/jars.lock) into `jars/` and checks each SHA-1. It's about 700 MB, mostly the AWS SDK bundle. Spark loads only these jars; nothing is resolved at runtime.
@@ -90,10 +95,10 @@ python -m venv .venv
 
 ```sh
 # SQL Server -> MinIO landing (Parquet), incremental by watermark
-.venv/Scripts/python Notebooks/source_to_landing.py
+python Notebooks/source_to_landing.py
 
 # MinIO landing -> Postgres bronze
-.venv/Scripts/python Notebooks/landing_to_bronze.py
+python Notebooks/landing_to_bronze.py
 ```
 
 Expected on a fresh run: `Summary: 27 landed` from landing, then `Summary: 27 batches loaded` from bronze. Running either script again without new source data is a no-op (`no new rows` and `up to date`).
@@ -124,3 +129,14 @@ SELECT count(*) FROM bronze.sales_orders;                                      -
 - **Time zones.** Spark's JVM and session are pinned to UTC, and bronze converts staged `timestamptz` at UTC explicitly. Without both, every timestamp shifts by the machine's UTC offset.
 - **SCD2 history** for customers, stock items and suppliers comes from the temporal `_Archive` tables, which are extracted alongside the current tables. See [docs/adr/0002-scd2-history-from-temporal-archives.md](docs/adr/0002-scd2-history-from-temporal-archives.md).
 - **Two watermark stores** (landing in MinIO, bronze in `control.watermark`) are deliberate. See [docs/adr/0001-separate-watermark-stores.md](docs/adr/0001-separate-watermark-stores.md).
+
+## Known limitations
+
+Accepted for a local, single-machine portfolio pipeline. Revisit before running it anywhere shared.
+
+- **One runner at a time.** Landing rewrites a single `watermarks.json`, and bronze reuses one staging table per table. Overlapping runs aren't supported. Bronze refuses a staging table that holds the wrong batch, and Airflow should run the DAG with `max_active_runs=1`.
+- **Late-committing rows.** Extraction trusts that the source never commits a row whose watermark is at or below a high watermark already read. That holds for the simulator, but not for long-running transactions on a live OLTP system (a lookback window or change tracking would fix it).
+- **Hard deletes aren't captured.** Watermark extraction only sees inserts and updates. WWI's simulator doesn't hard-delete; a real source would need tombstones or CDC.
+- **Bronze is append-only history.** An updated row appears once per batch that landed it, including the older "current" snapshots of temporal dimensions. Silver takes the latest version per key (by `_batch_id`) before it uses a table. See ADR 0002.
+- **Schema drift stops the load.** If the source schema changes, bronze rejects the batch instead of altering tables. Regenerate `bronze_tables.sql` and migrate the affected table by hand.
+- **Local-only security.** Ports bind to `127.0.0.1`, connections use `sa`, the MinIO root login, plain HTTP and `trustServerCertificate=true`, and anyone who can write to the landing bucket is trusted. Use least-privilege accounts and TLS for anything beyond a laptop.

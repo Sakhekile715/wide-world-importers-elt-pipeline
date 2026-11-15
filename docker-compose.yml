@@ -9,8 +9,9 @@ services:
       MSSQL_PID: Developer
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
       MSSQL_MEMORY_LIMIT_MB: "2048"
+    # Local development only: publish on localhost, not on every interface.
     ports:
-      - "1433:1433"
+      - "127.0.0.1:1433:1433"
     volumes:
       - mssql-data:/var/opt/mssql
       - ./backups:/var/opt/mssql/backup
@@ -29,8 +30,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # web console
     volumes:
       - minio-data:/data
     restart: unless-stopped

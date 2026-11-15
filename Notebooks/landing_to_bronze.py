@@ -127,6 +127,20 @@ class Warehouse:
         ).fetchone()
         return row[0] if row else None
 
+    def loaded_batch_ids(self, table: str) -> set[str]:
+        """Every batch that has ever been loaded successfully for this table.
+
+        Pending work is "passed in landing but not in this set", not
+        "newer than last_batch_id": reloading a later batch by hand must not
+        hide an older batch that was never loaded.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT batch_id FROM control.run_log "
+            "WHERE table_name = %s AND layer = 'bronze' AND status = 'success'",
+            (table,),
+        ).fetchall()
+        return {r[0] for r in rows}
+
     def staging_count(self, table: str) -> int:
         return self.conn.execute(
             sql.SQL("SELECT count(*) FROM {}.{}").format(
@@ -163,6 +177,14 @@ class Warehouse:
         stage = sql.SQL("{}.{}").format(sql.Identifier(STAGING_SCHEMA), sql.Identifier(table))
 
         with self.conn.transaction():  # COMMIT on success, ROLLBACK on any exception
+            # Staging is one shared table per bronze table; make sure it holds
+            # this batch and nothing else (e.g. if two loads ever overlapped).
+            staged_ids = [r[0] for r in self.conn.execute(
+                sql.SQL("SELECT DISTINCT _batch_id FROM {}").format(stage)).fetchall()]
+            if staged_ids != [batch_id]:
+                raise LoadError(
+                    f"{table}: staging holds batch ids {staged_ids}, expected [{batch_id!r}]"
+                )
             deleted = self.conn.execute(
                 sql.SQL("DELETE FROM {} WHERE _batch_id = %s").format(bronze), (batch_id,)
             ).rowcount
@@ -199,8 +221,16 @@ class Warehouse:
                                       THEN EXCLUDED.last_value
                                       ELSE control.watermark.last_value END,
                     last_batch_id = GREATEST(control.watermark.last_batch_id, EXCLUDED.last_batch_id),
-                    status = 'success',
-                    error = NULL,
+                    -- A success only clears the failure it resolves: reloading
+                    -- some other (older) batch leaves a pending failure visible.
+                    status = CASE WHEN control.watermark.failed_batch_id IS NULL
+                                    OR control.watermark.failed_batch_id = EXCLUDED.last_batch_id
+                                  THEN 'success' ELSE control.watermark.status END,
+                    error = CASE WHEN control.watermark.failed_batch_id IS NULL
+                                   OR control.watermark.failed_batch_id = EXCLUDED.last_batch_id
+                                 THEN NULL ELSE control.watermark.error END,
+                    failed_batch_id = CASE WHEN control.watermark.failed_batch_id = EXCLUDED.last_batch_id
+                                           THEN NULL ELSE control.watermark.failed_batch_id END,
                     updated_at = now()
                 """,
                 run,
@@ -213,10 +243,12 @@ class Warehouse:
             self.conn.execute(
                 """
                 INSERT INTO control.watermark
-                    (table_name, watermark_column, status, error, updated_at)
-                VALUES (%(table_name)s, %(watermark_column)s, 'failed', %(error)s, now())
+                    (table_name, watermark_column, status, error, failed_batch_id, updated_at)
+                VALUES (%(table_name)s, %(watermark_column)s, 'failed', %(error)s,
+                        %(batch_id)s, now())
                 ON CONFLICT (table_name) DO UPDATE SET
-                    status = 'failed', error = EXCLUDED.error, updated_at = now()
+                    status = 'failed', error = EXCLUDED.error,
+                    failed_batch_id = EXCLUDED.failed_batch_id, updated_at = now()
                 """,
                 run,
             )
@@ -360,7 +392,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.batch_id:
                 pending = [b for b in batches if b[0]["batch_id"] == args.batch_id]
             else:
-                pending = [b for b in batches if last is None or b[0]["batch_id"] > last]
+                done_ids = wh.loaded_batch_ids(table)
+                pending = [b for b in batches if b[0]["batch_id"] not in done_ids]
 
             if not pending:
                 log.info("%-34s up to date (last batch %s)", table, last)
