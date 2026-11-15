@@ -1,0 +1,68 @@
+version: 2
+
+# Bronze tables loaded by Notebooks/landing_to_bronze.py. Models read them only
+# through source(); nothing in dbt writes to the bronze schema.
+#
+# Bronze is append-only history: a source row appears once per landing batch
+# that carried it (check _batch_id). Take the latest version per key before
+# using a table (see README, Known limitations, and ADR 0002).
+
+sources:
+  - name: bronze
+    schema: bronze
+    description: Raw copies of the WideWorldImporters source tables, one row per landed version.
+    tables:
+      - name: application_cities
+        description: "Application.Cities (watermark ValidFrom)."
+      - name: application_countries
+        description: "Application.Countries (watermark ValidFrom)."
+      - name: application_deliverymethods
+        description: "Application.DeliveryMethods (watermark ValidFrom)."
+      - name: application_people
+        description: "Application.People (watermark ValidFrom)."
+      - name: application_stateprovinces
+        description: "Application.StateProvinces (watermark ValidFrom)."
+      - name: application_transactiontypes
+        description: "Application.TransactionTypes (watermark ValidFrom)."
+      - name: purchasing_purchaseorderlines
+        description: "Purchasing.PurchaseOrderLines (watermark LastEditedWhen)."
+      - name: purchasing_purchaseorders
+        description: "Purchasing.PurchaseOrders (watermark LastEditedWhen)."
+      - name: purchasing_suppliercategories
+        description: "Purchasing.SupplierCategories (watermark ValidFrom)."
+      - name: purchasing_suppliers
+        description: "Purchasing.Suppliers (watermark ValidFrom)."
+      - name: purchasing_suppliertransactions
+        description: "Purchasing.SupplierTransactions (watermark LastEditedWhen)."
+      - name: sales_buyinggroups
+        description: "Sales.BuyingGroups (watermark ValidFrom)."
+      - name: sales_customercategories
+        description: "Sales.CustomerCategories (watermark ValidFrom)."
+      - name: sales_customers
+        description: "Sales.Customers (watermark ValidFrom)."
+      - name: sales_customertransactions
+        description: "Sales.CustomerTransactions (watermark LastEditedWhen)."
+      - name: sales_invoicelines
+        description: "Sales.InvoiceLines (watermark LastEditedWhen)."
+      - name: sales_invoices
+        description: "Sales.Invoices (watermark LastEditedWhen)."
+      - name: sales_orderlines
+        description: "Sales.OrderLines (watermark LastEditedWhen)."
+      - name: sales_orders
+        description: "Sales.Orders (watermark LastEditedWhen)."
+      - name: warehouse_stockgroups
+        description: "Warehouse.StockGroups (watermark ValidFrom)."
+      - name: warehouse_stockitemholdings
+        description: "Warehouse.StockItemHoldings (watermark LastEditedWhen)."
+      - name: warehouse_stockitems
+        description: "Warehouse.StockItems (watermark ValidFrom)."
+      - name: warehouse_stockitemstockgroups
+        description: "Warehouse.StockItemStockGroups (watermark LastEditedWhen)."
+      - name: warehouse_stockitemtransactions
+        description: "Warehouse.StockItemTransactions (watermark LastEditedWhen)."
+      - name: purchasing_suppliers_archive
+        description: "Purchasing.Suppliers_Archive (watermark ValidTo). History (earlier versions) of the temporal table."
+      - name: sales_customers_archive
+        description: "Sales.Customers_Archive (watermark ValidTo). History (earlier versions) of the temporal table."
+      - name: warehouse_stockitems_archive
+        description: "Warehouse.StockItems_Archive (watermark ValidTo). History (earlier versions) of the temporal table."

@@ -1,4 +1,12 @@
-# Python 3.11. JVM jars are pinned separately in jars/jars.lock
-# (python scripts/fetch_jars.py). Java 17 must be on PATH for PySpark.
+# Python 3.11. Only what the pipeline imports or runs; nothing for notebooks.
+# JVM jars are pinned separately in jars/jars.lock (python scripts/fetch_jars.py).
+# Java 17 must be on PATH for PySpark.
+
+# Landing and bronze (Notebooks/*.py)
 pyspark==4.3.0
 psycopg[binary]==3.3.9
+
+# Transformations (dbt/). dbt-core is pinned explicitly: dbt-postgres alone
+# lets pip resolve a dbt-core pre-release (1.13.0b1 at the time of writing).
+dbt-core==1.12.7
+dbt-postgres==1.11.0
