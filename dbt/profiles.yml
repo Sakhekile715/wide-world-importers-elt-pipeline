@@ -11,4 +11,7 @@ wwi:
       password: "{{ env_var('POSTGRES_PASSWORD') }}"
       dbname: "{{ env_var('POSTGRES_DB') }}"
       schema: silver   # default schema for models without +schema
+      # 'prefer' suits the local database. For a database across a network,
+      # set POSTGRES_SSLMODE=verify-full (plus the CA certificate for libpq).
+      sslmode: "{{ env_var('POSTGRES_SSLMODE', 'prefer') }}"
       threads: 4
