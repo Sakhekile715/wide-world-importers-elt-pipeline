@@ -4,7 +4,7 @@ End-to-end ELT pipeline on Microsoft's Wide World Importers OLTP database.
 
 SQL Server (Docker) -> PySpark incremental extract -> Parquet landing (MinIO) -> Postgres bronze -> dbt -> Power BI, orchestrated by Airflow.
 
-Work in progress (Oct-Nov 2026). Built so far: source restore, landing, bronze.
+Work in progress (Oct-Nov 2026). Built so far: source restore, landing, bronze, dbt project setup.
 
 ## Run it from a fresh clone
 
@@ -116,6 +116,17 @@ SELECT count(*) FROM bronze.sales_orders;                                      -
 
 `73595` is the count straight after the step 3 restore. If the source has been advanced with `sql/simulate_one_day.sql`, compare against `SELECT COUNT(*) FROM Sales.Orders` in SQL Server instead.
 
+### 8. Check dbt
+
+dbt reads its connection from `.env` through a small wrapper, so the same command works in PowerShell, Git Bash and on macOS/Linux. Run dbt through it rather than calling `dbt` directly:
+
+```sh
+python scripts/run_dbt.py debug                      # expect: All checks passed!
+python scripts/run_dbt.py ls --resource-type source  # expect: 27 bronze sources
+```
+
+The project lives in `dbt/`, with its connection profile in `dbt/profiles.yml` (no secrets; it reads `POSTGRES_*` from the environment). Models will build into the `silver` and `gold` schemas.
+
 ## Layout
 
 | Path | What |
@@ -126,6 +137,8 @@ SELECT count(*) FROM bronze.sales_orders;                                      -
 | `sql/postgres/` | Postgres DDL: role/database setup, bronze tables (explicit types), control tables |
 | `sql/simulate_one_day.sql` | advances the source by one business day (for incremental testing) |
 | `backups/` | restore scripts; the `.bak` itself is not in git |
+| `dbt/` | dbt project: bronze declared as sources (`models/sources.yml`), silver/gold models to come |
+| `scripts/run_dbt.py` | runs dbt with `.env` loaded and `dbt/` as project and profile dir |
 | `jars/jars.lock` | pinned Spark JVM dependencies |
 | `docs/adr/` | architecture decisions |
 

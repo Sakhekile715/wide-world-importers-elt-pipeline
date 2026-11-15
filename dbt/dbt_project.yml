@@ -1,0 +1,20 @@
+name: wwi
+version: "0.1.0"
+config-version: 2
+profile: wwi          # dbt/profiles.yml (credentials from .env via scripts/run_dbt.py)
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+analysis-paths: ["analyses"]
+
+clean-targets: ["target", "dbt_packages"]
+
+# Layers (configured as the folders get models):
+#   bronze  - loaded by Notebooks/landing_to_bronze.py, read via sources only
+#   silver  - models/silver: deduplicated, typed, SCD2 dimensions (ADR 0002)
+#   gold    - models/gold:   reporting marts
+# Schema names are used as written (see macros/generate_schema_name.sql),
+# so +schema: silver builds into "silver", not "<target>_silver".
