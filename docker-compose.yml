@@ -21,5 +21,20 @@ services:
       retries: 10
       start_period: 30s
 
+  minio:
+    image: docker.io/pgsty/silo:RELEASE.2026-10-26T00-00-00Z
+    container_name: wwi-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+
 volumes:
   mssql-data:
+  minio-data:

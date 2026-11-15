@@ -2,10 +2,22 @@
 
 CREATED BY: Sakhekile Mtyingizane
 DATE CREATED: 2026-10-14
+LAST UPDATED: 2026-11-15 -- scope extended from 13 to 24 tables, then to 27
+              (history tables of Customers, StockItems, Suppliers for DR-02)
 OBJECTIVE:
     This script generates a baseline report for the WideWorldImporters database.
     It counts the number of rows in key tables and retrieves the minimum and maximum dates
     for relevant date columns, as well as the latest last edited timestamp.
+
+SCOPE:
+    27 tables covering every Business Requirement except BR-06 (cold chain),
+    which is out of scope. System-versioned (temporal) tables use ValidFrom as
+    the watermark; non-temporal tables use LastEditedWhen; the three history
+    (_Archive) tables use ValidTo.
+
+NOTE:
+    Run this against a freshly restored source. Running it after the simulator
+    has executed produces a moved baseline, not a starting one.
 */
 
 
@@ -54,6 +66,50 @@ WITH baseline AS (
     UNION ALL
     SELECT 'Application.People', COUNT_BIG(*), NULL, NULL, MAX(ValidFrom)
     FROM Application.People
+    UNION ALL
+    SELECT 'Application.Cities', COUNT_BIG(*), NULL, NULL, MAX(ValidFrom)
+    FROM Application.Cities
+    UNION ALL
+    SELECT 'Application.StateProvinces', COUNT_BIG(*), NULL, NULL, MAX(ValidFrom)
+    FROM Application.StateProvinces
+    UNION ALL
+    SELECT 'Application.Countries', COUNT_BIG(*), NULL, NULL, MAX(ValidFrom)
+    FROM Application.Countries
+    UNION ALL
+    SELECT 'Application.DeliveryMethods', COUNT_BIG(*), NULL, NULL, MAX(ValidFrom)
+    FROM Application.DeliveryMethods
+    UNION ALL
+    SELECT 'Application.TransactionTypes', COUNT_BIG(*), NULL, NULL, MAX(ValidFrom)
+    FROM Application.TransactionTypes
+    UNION ALL
+    SELECT 'Sales.CustomerCategories', COUNT_BIG(*), NULL, NULL, MAX(ValidFrom)
+    FROM Sales.CustomerCategories
+    UNION ALL
+    SELECT 'Sales.BuyingGroups', COUNT_BIG(*), NULL, NULL, MAX(ValidFrom)
+    FROM Sales.BuyingGroups
+    UNION ALL
+    SELECT 'Purchasing.SupplierCategories', COUNT_BIG(*), NULL, NULL, MAX(ValidFrom)
+    FROM Purchasing.SupplierCategories
+    UNION ALL
+    SELECT 'Warehouse.StockGroups', COUNT_BIG(*), NULL, NULL, MAX(ValidFrom)
+    FROM Warehouse.StockGroups
+    UNION ALL
+    SELECT 'Warehouse.StockItemStockGroups', COUNT_BIG(*), NULL, NULL, MAX(LastEditedWhen)
+    FROM Warehouse.StockItemStockGroups
+    UNION ALL
+    SELECT 'Warehouse.StockItemHoldings', COUNT_BIG(*), NULL, NULL, MAX(LastEditedWhen)
+    FROM Warehouse.StockItemHoldings
+    -- History tables of the SCD2 dimensions (DR-02). Watermark is ValidTo:
+    -- an archived version keeps its old ValidFrom, ValidTo is when it ended.
+    UNION ALL
+    SELECT 'Sales.Customers_Archive', COUNT_BIG(*), NULL, NULL, MAX(ValidTo)
+    FROM Sales.Customers_Archive
+    UNION ALL
+    SELECT 'Purchasing.Suppliers_Archive', COUNT_BIG(*), NULL, NULL, MAX(ValidTo)
+    FROM Purchasing.Suppliers_Archive
+    UNION ALL
+    SELECT 'Warehouse.StockItems_Archive', COUNT_BIG(*), NULL, NULL, MAX(ValidTo)
+    FROM Warehouse.StockItems_Archive
 )
 SELECT
     table_name,
