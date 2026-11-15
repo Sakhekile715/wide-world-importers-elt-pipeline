@@ -6,6 +6,10 @@ lake/
 *.bak
 *.parquet
 
+# Spark jars: downloaded by scripts/fetch_jars.py, pinned in jars/jars.lock
+jars/*.jar
+jars/*.part
+
 # Python
 .venv/
 __pycache__/
