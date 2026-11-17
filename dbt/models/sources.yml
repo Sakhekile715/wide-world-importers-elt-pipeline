@@ -8,9 +8,18 @@ version: 2
 # using a table (see README, Known limitations, and ADR 0002).
 
 sources:
-  - name: bronze
+  - name: wwi_bronze
     schema: bronze
     description: Raw copies of the WideWorldImporters source tables, one row per landed version.
+
+    # Freshness measures when the PIPELINE last loaded, not the business date.
+    # _ingested_at is wall-clock; the business columns are 2013-2016 and would
+    # report ten years stale on every run (DR-04).
+    loaded_at_field: _ingested_at
+    freshness:
+      warn_after: {count: 24, period: hour}
+      error_after: {count: 48, period: hour}
+
     tables:
       - name: application_cities
         description: "Application.Cities (watermark ValidFrom)."
@@ -62,7 +71,10 @@ sources:
         description: "Warehouse.StockItemTransactions (watermark LastEditedWhen)."
       - name: purchasing_suppliers_archive
         description: "Purchasing.Suppliers_Archive (watermark ValidTo). History (earlier versions) of the temporal table."
+        freshness: null   # only changes when the dimension changes
       - name: sales_customers_archive
         description: "Sales.Customers_Archive (watermark ValidTo). History (earlier versions) of the temporal table."
+        freshness: null   # only changes when the dimension changes
       - name: warehouse_stockitems_archive
         description: "Warehouse.StockItems_Archive (watermark ValidTo). History (earlier versions) of the temporal table."
+        freshness: null   # only changes when the dimension changes
