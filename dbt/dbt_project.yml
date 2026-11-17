@@ -12,9 +12,30 @@ analysis-paths: ["analyses"]
 
 clean-targets: ["target", "dbt_packages"]
 
-# Layers (configured as the folders get models):
+# Layers:
 #   bronze  - loaded by Notebooks/landing_to_bronze.py, read via sources only
-#   silver  - models/silver: deduplicated, typed, SCD2 dimensions (ADR 0002)
-#   gold    - models/gold:   reporting marts
+#   silver  - models/staging (dedup to current state) + models/intermediate (SCD2 chains)
+#   gold    - models/marts (dims and facts for reporting)
+#
 # Schema names are used as written (see macros/generate_schema_name.sql),
 # so +schema: silver builds into "silver", not "<target>_silver".
+#
+# Views by default: the data is small enough that table materialization buys
+# nothing. The exception is models/intermediate, where the SCD2 window
+# functions are expensive enough to build once.
+
+models:
+  wwi:
+    +materialized: view
+
+    staging:
+      +schema: silver
+
+    intermediate:
+      +schema: silver
+      +materialized: table
+
+    marts:
+      +schema: gold
+
+
