@@ -1,0 +1,234 @@
+version: 2
+
+# Tests for the Warehouse staging models. See _application__models.yml for
+# what each kind of test proves and when severity: warn is used.
+#
+# color_id, unit_package_id, outer_package_id (stock items) and
+# package_type_id (order, invoice and purchase order lines) have no
+# relationships test: Warehouse.Colors and Warehouse.PackageTypes are not
+# extracted, so there is nothing to test them against.
+
+models:
+  - name: stg_wwi_bronze__warehouse_stockgroups
+    description: Current version of each stock group (Warehouse.StockGroups).
+    columns:
+      - name: stock_group_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_wwi_bronze__warehouse_stockitemholdings
+    description: >
+      Latest stock position per stock item (Warehouse.StockItemHoldings).
+      One row per stock item, so stock_item_id is the key.
+    data_tests:
+      # Negative stock would point at a missed receipt; it is a warning
+      # because a real warehouse can briefly oversell.
+      - expression_is_true:
+          name: stockitemholdings_quantity_not_negative
+          arguments:
+            expression: "quantity_on_hand >= 0"
+          config:
+            severity: warn
+      - expression_is_true:
+          name: stockitemholdings_levels_not_negative
+          arguments:
+            expression: "last_cost_price >= 0 AND reorder_level >= 0 AND target_stock_level >= 0"
+    columns:
+      - name: stock_item_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__warehouse_stockitems')
+                field: stock_item_id
+
+  - name: stg_wwi_bronze__warehouse_stockitems
+    description: >
+      Current version of each stock item (Warehouse.StockItems). Earlier
+      versions are in stg_wwi_bronze__warehouse_stockitems_archive.
+      valid_from/valid_to are kept for the SCD2 chain in intermediate
+      (ADR 0002).
+    data_tests:
+      # A current row is the open version (valid_to = 9999-12-31 sentinel).
+      # See suppliers_current_version_is_open for why.
+      - expression_is_true:
+          name: stockitems_current_version_is_open
+          arguments:
+            expression: "valid_to >= DATE '9999-12-31' AND valid_from < valid_to"
+      - expression_is_true:
+          name: stockitems_unit_price_positive
+          arguments:
+            expression: "unit_price > 0"
+      - expression_is_true:
+          name: stockitems_quantity_per_outer_positive
+          arguments:
+            expression: "quantity_per_outer > 0"
+      - expression_is_true:
+          name: stockitems_tax_rate_is_a_percentage
+          arguments:
+            expression: "tax_rate BETWEEN 0 AND 100"
+      - expression_is_true:
+          name: stockitems_lead_time_not_negative
+          arguments:
+            expression: "lead_time_days >= 0"
+    columns:
+      - name: stock_item_id
+        data_tests:
+          - unique
+          - not_null
+      - name: stock_item_name
+        data_tests:
+          - unique
+          - not_null
+      - name: supplier_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__purchasing_suppliers')
+                field: supplier_id
+      - name: valid_from
+        data_tests:
+          - not_null
+      - name: valid_to
+        data_tests:
+          - not_null
+
+  - name: stg_wwi_bronze__warehouse_stockitems_archive
+    description: >
+      Earlier versions of stock items (Warehouse.StockItems_Archive), one row
+      per version. Several rows per stock item is expected, so the key is
+      (stock_item_id, valid_from, valid_to), not stock_item_id alone. The
+      validity columns are kept for the SCD2 chain in intermediate
+      (ADR 0002).
+    data_tests:
+      # valid_to is part of the key because a zero-length version
+      # (valid_from = valid_to) shares its valid_from with the next version.
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [stock_item_id, valid_from, valid_to]
+      # Zero-length versions are allowed here (ADR 0002 drops them in
+      # intermediate); a version that ends before it starts is not.
+      - expression_is_true:
+          name: stockitems_archive_valid_from_not_after_valid_to
+          arguments:
+            expression: "valid_from <= valid_to"
+    columns:
+      # See the same test on suppliers_archive: a failure means a stock item
+      # was hard-deleted at the source.
+      - name: stock_item_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__warehouse_stockitems')
+                field: stock_item_id
+              config:
+                severity: warn
+      - name: valid_from
+        data_tests:
+          - not_null
+      - name: valid_to
+        data_tests:
+          - not_null
+
+  - name: stg_wwi_bronze__warehouse_stockitemstockgroups
+    description: >
+      Which stock groups each stock item belongs to
+      (Warehouse.StockItemStockGroups), many-to-many. The pair
+      (stock_item_id, stock_group_id) must also be unique; that is checked in
+      tests/staging/assert_stockitemstockgroups_pair_unique.sql.
+    columns:
+      - name: stock_item_stock_group_id
+        data_tests:
+          - unique
+          - not_null
+      - name: stock_item_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__warehouse_stockitems')
+                field: stock_item_id
+      - name: stock_group_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__warehouse_stockgroups')
+                field: stock_group_id
+
+  - name: stg_wwi_bronze__warehouse_stockitemtransactions
+    description: >
+      Latest version of each stock movement (Warehouse.StockItemTransactions).
+      Quantity is signed: issues are negative, receipts positive.
+    data_tests:
+      # The sign of quantity must match the movement type, or stock-on-hand
+      # calculations that sum quantity would drift.
+      - expression_is_true:
+          name: stockitemtransactions_issue_is_negative
+          arguments:
+            expression: "quantity < 0"
+          config:
+            where: "transaction_type_id = 10"
+      - expression_is_true:
+          name: stockitemtransactions_receipt_is_positive
+          arguments:
+            expression: "quantity > 0"
+          config:
+            where: "transaction_type_id = 11"
+      # A movement is either to a customer or from a supplier, never both.
+      # (Stocktake adjustments have neither.)
+      - expression_is_true:
+          name: stockitemtransactions_not_both_customer_and_supplier
+          arguments:
+            expression: "customer_id IS NULL OR supplier_id IS NULL"
+    columns:
+      - name: stock_item_transaction_id
+        data_tests:
+          - unique
+          - not_null
+      - name: stock_item_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__warehouse_stockitems')
+                field: stock_item_id
+      # Only the stock transaction types (9-12).
+      - name: transaction_type_id
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [9, 10, 11, 12]
+                quote: false
+      - name: customer_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_customers')
+                field: customer_id
+      - name: invoice_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_invoices')
+                field: invoice_id
+      - name: supplier_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__purchasing_suppliers')
+                field: supplier_id
+      - name: purchase_order_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__purchasing_purchaseorders')
+                field: purchase_order_id
+      - name: transaction_occurred_when
+        data_tests:
+          - not_null
