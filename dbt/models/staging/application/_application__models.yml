@@ -1,0 +1,117 @@
+version: 2
+
+# Tests for the Application staging models (reference data shared by every
+# other schema).
+#
+# How to read the tests in these staging files:
+#   - unique + not_null on the key proves dedup_latest_batch left exactly one
+#     row per key. Bronze is append-only, so a broken dedup shows up here first.
+#   - relationships proves a foreign key points at a row that exists in the
+#     referenced staging model. Null foreign keys are skipped by dbt, so
+#     optional links (e.g. buying_group_id) pass when empty.
+#   - not_null is only added where a join or a report depends on the column.
+#     Bronze's DDL already enforces NOT NULL on load, so repeating it for every
+#     column would add run time without catching anything new.
+#   - expression_is_true is this project's generic test (tests/generic/). It
+#     fails on any row where the expression is false; rows where it evaluates
+#     to NULL pass.
+#   - severity: warn marks business rules that hold on today's data but could
+#     legitimately change as the simulator adds days. They show up in the
+#     output without failing the build. Everything else fails the build.
+
+models:
+  - name: stg_wwi_bronze__application_cities
+    description: Current version of each city (Application.Cities).
+    columns:
+      - name: city_id
+        data_tests:
+          - unique
+          - not_null
+      - name: state_province_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_stateprovinces')
+                field: state_province_id
+
+  - name: stg_wwi_bronze__application_countries
+    description: Current version of each country (Application.Countries).
+    columns:
+      - name: country_id
+        data_tests:
+          - unique
+          - not_null
+      # Country names and ISO codes are natural keys; a duplicate would
+      # double-count when reports group by country.
+      - name: country_name
+        data_tests:
+          - unique
+          - not_null
+      - name: iso_alpha3_code
+        data_tests:
+          - unique
+
+  - name: stg_wwi_bronze__application_deliverymethods
+    description: Current version of each delivery method (Application.DeliveryMethods).
+    columns:
+      - name: delivery_method_id
+        data_tests:
+          - unique
+          - not_null
+      - name: delivery_method_name
+        data_tests:
+          - not_null
+
+  - name: stg_wwi_bronze__application_people
+    description: >
+      Current version of each person (Application.People): employees,
+      salespeople and customer/supplier contacts. Contact details, logon
+      data and photos are left out on purpose.
+    data_tests:
+      # A salesperson who is not an employee would break the employee
+      # dimension's salesperson filter.
+      - expression_is_true:
+          name: people_salesperson_is_employee
+          arguments:
+            expression: "NOT is_salesperson OR is_employee"
+    columns:
+      - name: person_id
+        data_tests:
+          - unique
+          - not_null
+      - name: full_name
+        data_tests:
+          - not_null
+
+  - name: stg_wwi_bronze__application_stateprovinces
+    description: Current version of each state or province (Application.StateProvinces).
+    columns:
+      - name: state_province_id
+        data_tests:
+          - unique
+          - not_null
+      - name: state_province_code
+        data_tests:
+          - unique
+      - name: country_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_countries')
+                field: country_id
+
+  - name: stg_wwi_bronze__application_transactiontypes
+    description: >
+      Current version of each transaction type (Application.TransactionTypes).
+      IDs 1-4 and 13 are customer types, 5-8 supplier types and 9-12 stock
+      types; the transaction models' accepted_values tests rely on this split.
+    columns:
+      - name: transaction_type_id
+        data_tests:
+          - unique
+          - not_null
+      - name: transaction_type_name
+        data_tests:
+          - not_null

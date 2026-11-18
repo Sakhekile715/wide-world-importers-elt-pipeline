@@ -1,0 +1,246 @@
+version: 2
+
+# Tests for the Purchasing staging models. See _application__models.yml for
+# what each kind of test proves and when severity: warn is used.
+
+models:
+  - name: stg_wwi_bronze__purchasing_purchaseorderlines
+    description: Latest version of each purchase order line (Purchasing.PurchaseOrderLines).
+    data_tests:
+      - expression_is_true:
+          name: purchaseorderlines_ordered_outers_positive
+          arguments:
+            expression: "ordered_outers > 0"
+      # Receiving more than was ordered is possible in real life, so this is a
+      # warning: it flags rows to look at, not a broken pipeline.
+      - expression_is_true:
+          name: purchaseorderlines_received_within_ordered
+          arguments:
+            expression: "received_outers BETWEEN 0 AND ordered_outers"
+          config:
+            severity: warn
+    columns:
+      - name: purchase_order_line_id
+        data_tests:
+          - unique
+          - not_null
+      - name: purchase_order_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__purchasing_purchaseorders')
+                field: purchase_order_id
+      - name: stock_item_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__warehouse_stockitems')
+                field: stock_item_id
+
+  - name: stg_wwi_bronze__purchasing_purchaseorders
+    description: Latest version of each purchase order header (Purchasing.PurchaseOrders).
+    data_tests:
+      - expression_is_true:
+          name: purchaseorders_expected_delivery_not_before_order
+          arguments:
+            expression: "expected_delivery_date >= order_date"
+          config:
+            severity: warn
+    columns:
+      - name: purchase_order_id
+        data_tests:
+          - unique
+          - not_null
+      - name: supplier_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__purchasing_suppliers')
+                field: supplier_id
+      - name: delivery_method_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_deliverymethods')
+                field: delivery_method_id
+      - name: contact_person_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      - name: order_date
+        data_tests:
+          - not_null
+
+  - name: stg_wwi_bronze__purchasing_suppliercategories
+    description: Current version of each supplier category (Purchasing.SupplierCategories).
+    columns:
+      - name: supplier_category_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_wwi_bronze__purchasing_suppliers
+    description: >
+      Current version of each supplier (Purchasing.Suppliers). Earlier
+      versions are in stg_wwi_bronze__purchasing_suppliers_archive.
+      valid_from/valid_to are kept for the SCD2 chain in intermediate
+      (ADR 0002).
+    data_tests:
+      # A current row is the open version: its valid_to is the 9999-12-31
+      # sentinel. Anything earlier means a closed version leaked into the
+      # current table, or the dedup picked a stale snapshot. Compared to the
+      # date so the test doesn't depend on the sentinel's fractional seconds.
+      - expression_is_true:
+          name: suppliers_current_version_is_open
+          arguments:
+            expression: "valid_to >= DATE '9999-12-31' AND valid_from < valid_to"
+      - expression_is_true:
+          name: suppliers_payment_days_not_negative
+          arguments:
+            expression: "payment_days >= 0"
+    columns:
+      - name: supplier_id
+        data_tests:
+          - unique
+          - not_null
+      - name: supplier_name
+        data_tests:
+          - unique
+          - not_null
+      - name: supplier_category_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__purchasing_suppliercategories')
+                field: supplier_category_id
+      - name: primary_contact_person_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      - name: alternate_contact_person_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      - name: delivery_method_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_deliverymethods')
+                field: delivery_method_id
+      - name: delivery_city_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_cities')
+                field: city_id
+      - name: postal_city_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_cities')
+                field: city_id
+      - name: valid_from
+        data_tests:
+          - not_null
+      - name: valid_to
+        data_tests:
+          - not_null
+
+  - name: stg_wwi_bronze__purchasing_suppliers_archive
+    description: >
+      Earlier versions of suppliers (Purchasing.Suppliers_Archive), one row
+      per version. Several rows per supplier is expected, so the key is
+      (supplier_id, valid_from, valid_to), not supplier_id alone. The
+      validity columns are kept for the SCD2 chain in intermediate
+      (ADR 0002).
+    data_tests:
+      # valid_to is part of the key because a zero-length version
+      # (valid_from = valid_to) shares its valid_from with the next version.
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [supplier_id, valid_from, valid_to]
+      # Zero-length versions are allowed here (ADR 0002 drops them in
+      # intermediate); a version that ends before it starts is not.
+      - expression_is_true:
+          name: suppliers_archive_valid_from_not_after_valid_to
+          arguments:
+            expression: "valid_from <= valid_to"
+    columns:
+      # Every archived supplier should still exist as a current supplier.
+      # The pipeline doesn't capture hard deletes (README), so a failure here
+      # means a supplier was deleted at the source.
+      - name: supplier_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__purchasing_suppliers')
+                field: supplier_id
+              config:
+                severity: warn
+      - name: valid_from
+        data_tests:
+          - not_null
+      - name: valid_to
+        data_tests:
+          - not_null
+
+  - name: stg_wwi_bronze__purchasing_suppliertransactions
+    description: Latest version of each supplier ledger entry (Purchasing.SupplierTransactions).
+    data_tests:
+      # Invoices and credit notes carry tax, so their total must add up.
+      # Payments (type 7) record only transaction_amount and leave the
+      # excluding-tax and tax columns at 0, so they are excluded.
+      - expression_is_true:
+          name: suppliertransactions_invoice_amount_adds_up
+          arguments:
+            expression: "transaction_amount = amount_excluding_tax + tax_amount"
+          config:
+            where: "transaction_type_id IN (5, 6)"
+      # A finalized entry is fully settled: nothing outstanding, and it has a
+      # finalization date.
+      - expression_is_true:
+          name: suppliertransactions_finalized_has_no_balance
+          arguments:
+            expression: "outstanding_balance = 0 AND finalization_date IS NOT NULL"
+          config:
+            where: "is_finalized"
+    columns:
+      - name: supplier_transaction_id
+        data_tests:
+          - unique
+          - not_null
+      - name: supplier_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__purchasing_suppliers')
+                field: supplier_id
+      # Only the supplier transaction types (5-8). A customer or stock type
+      # here would mean rows landed in the wrong table.
+      - name: transaction_type_id
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [5, 6, 7, 8]
+                quote: false
+      - name: purchase_order_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__purchasing_purchaseorders')
+                field: purchase_order_id
+      - name: transaction_date
+        data_tests:
+          - not_null

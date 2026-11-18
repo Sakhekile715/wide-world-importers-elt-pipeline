@@ -1,0 +1,392 @@
+version: 2
+
+# Tests for the Sales staging models. See _application__models.yml for what
+# each kind of test proves and when severity: warn is used. Cross-model
+# checks (invoice totals, invoices without lines, salesperson flag) are
+# singular tests in tests/staging/.
+
+models:
+  - name: stg_wwi_bronze__sales_buyinggroups
+    description: Current version of each buying group (Sales.BuyingGroups).
+    columns:
+      - name: buying_group_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_wwi_bronze__sales_customercategories
+    description: Current version of each customer category (Sales.CustomerCategories).
+    columns:
+      - name: customer_category_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_wwi_bronze__sales_customers
+    description: >
+      Current version of each customer (Sales.Customers). Earlier versions
+      are in stg_wwi_bronze__sales_customers_archive. valid_from/valid_to
+      are kept for the SCD2 chain in intermediate (ADR 0002).
+    data_tests:
+      # A current row is the open version (valid_to = 9999-12-31 sentinel).
+      # See suppliers_current_version_is_open for why.
+      - expression_is_true:
+          name: customers_current_version_is_open
+          arguments:
+            expression: "valid_to >= DATE '9999-12-31' AND valid_from < valid_to"
+      - expression_is_true:
+          name: customers_discount_is_a_percentage
+          arguments:
+            expression: "standard_discount_percentage BETWEEN 0 AND 100"
+      - expression_is_true:
+          name: customers_credit_limit_not_negative
+          arguments:
+            expression: "credit_limit >= 0"   # NULL (no limit) passes
+      - expression_is_true:
+          name: customers_payment_days_not_negative
+          arguments:
+            expression: "payment_days >= 0"
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_name
+        data_tests:
+          - unique
+          - not_null
+      # Head-office billing: points at another (or the same) customer.
+      - name: bill_to_customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_customers')
+                field: customer_id
+      - name: customer_category_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_customercategories')
+                field: customer_category_id
+      - name: buying_group_id   # optional: 261 customers have none
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_buyinggroups')
+                field: buying_group_id
+      - name: primary_contact_person_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      - name: alternate_contact_person_id   # optional
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      - name: delivery_method_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_deliverymethods')
+                field: delivery_method_id
+      - name: delivery_city_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_cities')
+                field: city_id
+      - name: postal_city_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_cities')
+                field: city_id
+      - name: valid_from
+        data_tests:
+          - not_null
+      - name: valid_to
+        data_tests:
+          - not_null
+
+  - name: stg_wwi_bronze__sales_customers_archive
+    description: >
+      Earlier versions of customers (Sales.Customers_Archive), one row per
+      version. Several rows per customer is expected, so the key is
+      (customer_id, valid_from, valid_to), not customer_id alone. The
+      validity columns are kept for the SCD2 chain in intermediate
+      (ADR 0002).
+    data_tests:
+      # valid_to is part of the key because a zero-length version
+      # (valid_from = valid_to, e.g. customer 890 on 2014-07-01) shares its
+      # valid_from with the next version.
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [customer_id, valid_from, valid_to]
+      # Zero-length versions are allowed here (ADR 0002 drops them in
+      # intermediate); a version that ends before it starts is not.
+      - expression_is_true:
+          name: customers_archive_valid_from_not_after_valid_to
+          arguments:
+            expression: "valid_from <= valid_to"
+    columns:
+      # See the same test on suppliers_archive: a failure means a customer was
+      # hard-deleted at the source.
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_customers')
+                field: customer_id
+              config:
+                severity: warn
+      - name: valid_from
+        data_tests:
+          - not_null
+      - name: valid_to
+        data_tests:
+          - not_null
+
+  - name: stg_wwi_bronze__sales_customertransactions
+    description: Latest version of each customer ledger entry (Sales.CustomerTransactions).
+    data_tests:
+      # Invoices and credit notes carry tax, so their total must add up.
+      # Payments (type 3) record only transaction_amount and leave the
+      # excluding-tax and tax columns at 0, so they are excluded.
+      - expression_is_true:
+          name: customertransactions_invoice_amount_adds_up
+          arguments:
+            expression: "transaction_amount = amount_excluding_tax + tax_amount"
+          config:
+            where: "transaction_type_id IN (1, 2)"
+      - expression_is_true:
+          name: customertransactions_finalized_has_no_balance
+          arguments:
+            expression: "outstanding_balance = 0 AND finalization_date IS NOT NULL"
+          config:
+            where: "is_finalized"
+    columns:
+      - name: customer_transaction_id
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_customers')
+                field: customer_id
+      # Only the customer transaction types (1-4 and 13, contra).
+      - name: transaction_type_id
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 13]
+                quote: false
+      - name: invoice_id   # empty on payments
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_invoices')
+                field: invoice_id
+      - name: transaction_date
+        data_tests:
+          - not_null
+
+  - name: stg_wwi_bronze__sales_invoicelines
+    description: Latest version of each invoice line (Sales.InvoiceLines). Grain of the sales fact.
+    data_tests:
+      # The line amounts are stored, not derived, so check they agree. A
+      # mismatch would make revenue differ depending on which column a
+      # report sums.
+      - expression_is_true:
+          name: invoicelines_tax_amount_matches_rate
+          arguments:
+            expression: "tax_amount = ROUND(quantity * unit_price * tax_rate / 100, 2)"
+      - expression_is_true:
+          name: invoicelines_extended_price_adds_up
+          arguments:
+            expression: "extended_price = quantity * unit_price + tax_amount"
+      # Credit notes could carry negative quantities; none exist yet.
+      - expression_is_true:
+          name: invoicelines_quantity_positive
+          arguments:
+            expression: "quantity > 0"
+          config:
+            severity: warn
+    columns:
+      - name: invoice_line_id
+        data_tests:
+          - unique
+          - not_null
+      - name: invoice_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_invoices')
+                field: invoice_id
+      - name: stock_item_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__warehouse_stockitems')
+                field: stock_item_id
+
+  - name: stg_wwi_bronze__sales_invoices
+    description: Latest version of each invoice header (Sales.Invoices).
+    data_tests:
+      - expression_is_true:
+          name: invoices_delivered_not_before_invoiced
+          arguments:
+            expression: "confirmed_delivery_time::date >= invoice_date"   # NULL (not delivered yet) passes
+          config:
+            severity: warn
+    columns:
+      - name: invoice_id
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_customers')
+                field: customer_id
+      - name: bill_to_customer_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_customers')
+                field: customer_id
+      - name: order_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_orders')
+                field: order_id
+      - name: delivery_method_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_deliverymethods')
+                field: delivery_method_id
+      - name: contact_person_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      - name: accounts_person_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      - name: salesperson_person_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      - name: packed_by_person_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      - name: invoice_date
+        data_tests:
+          - not_null
+
+  - name: stg_wwi_bronze__sales_orderlines
+    description: Latest version of each order line (Sales.OrderLines).
+    data_tests:
+      - expression_is_true:
+          name: orderlines_quantity_positive
+          arguments:
+            expression: "quantity > 0"
+      - expression_is_true:
+          name: orderlines_picked_within_ordered
+          arguments:
+            expression: "picked_quantity BETWEEN 0 AND quantity"
+          config:
+            severity: warn
+    columns:
+      - name: order_line_id
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_orders')
+                field: order_id
+      - name: stock_item_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__warehouse_stockitems')
+                field: stock_item_id
+
+  - name: stg_wwi_bronze__sales_orders
+    description: Latest version of each sales order header (Sales.Orders).
+    data_tests:
+      - expression_is_true:
+          name: orders_expected_delivery_not_before_order
+          arguments:
+            expression: "expected_delivery_date >= order_date"
+          config:
+            severity: warn
+    columns:
+      - name: order_id
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_customers')
+                field: customer_id
+      - name: salesperson_person_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      - name: picked_by_person_id   # empty until picked
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      - name: contact_person_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__application_people')
+                field: person_id
+      # A backorder points at the order that replaces the undersupplied lines.
+      - name: backorder_order_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_wwi_bronze__sales_orders')
+                field: order_id
+      - name: order_date
+        data_tests:
+          - not_null
