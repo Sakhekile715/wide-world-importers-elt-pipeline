@@ -101,6 +101,11 @@ models:
               arguments:
                 to: ref('stg_wwi_bronze__application_countries')
                 field: country_id
+      # BR-01 slices revenue by sales territory, so a state without one would
+      # drop out of that slicer.
+      - name: sales_territory
+        data_tests:
+          - not_null
 
   - name: stg_wwi_bronze__application_transactiontypes
     description: >

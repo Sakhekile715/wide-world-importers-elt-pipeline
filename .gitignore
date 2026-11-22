@@ -31,3 +31,6 @@ Thumbs.db
 
 # Claude Code local settings
 .claude/
+
+# Gold-layer plan page, published as an artifact; kept local for now
+docs/dimensional-model.html
