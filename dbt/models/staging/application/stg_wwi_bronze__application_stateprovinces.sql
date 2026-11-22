@@ -12,5 +12,6 @@ SELECT
     state_province_name,
     state_province_code,
     country_id,
+    sales_territory,   
     latest_recorded_population
 FROM deduped
